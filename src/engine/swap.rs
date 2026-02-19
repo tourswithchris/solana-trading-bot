@@ -1,5 +1,5 @@
 use crate::common::utils::AppState;
-use crate::dex::pump_fun::Pump;
+use crate::dex::pumpfun::Pump;
 use crate::dex::raydium::Raydium;
 use anyhow::Result;
 use clap::ValueEnum;
@@ -59,7 +59,7 @@ pub async fn raydium_swap(
             amount_in,
             swap_direction,
             in_type,
-            slippage,
+            slippage as f64,
             use_jito,
             amm_pool_id,
             pool_state,
@@ -95,7 +95,7 @@ pub async fn pump_swap(
     };
     let swapx = Pump::new(state.rpc_nonblocking_client, state.rpc_client, state.wallet);
     let res = match swapx
-        .swap(mint, amount_in, swap_direction, in_type, slippage, use_jito)
+        .swap(mint.parse::<Pubkey>()?, amount_in, swap_direction, in_type, slippage as f64, use_jito)
         .await
     {
         Ok(res) => res,

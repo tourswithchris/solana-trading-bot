@@ -1,28 +1,14 @@
-use std::{env, sync::Arc, time::Duration};
-
-use anyhow::Result;
-use jito_json_rpc_client::jsonrpc_client::rpc_client::RpcClient as JitoRpcClient;
-use solana_client::rpc_client::RpcClient;
+use solana_sdk::signature::Signer;
 use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
     signature::Keypair,
-    signer::Signer,
-    system_transaction,
-    transaction::{Transaction, VersionedTransaction},
+    transaction::Transaction,
 };
-use spl_token::ui_amount_to_amount;
-
+use std::env;
 use std::str::FromStr;
-use tokio::time::Instant;
+use std::time::Instant;
 
-use crate::{
-    common::logger::Logger,
-    services::jito::{
-        self, get_tip_account, get_tip_value, init_tip_accounts, wait_for_bundle_confirmation,
-    },
-};
-
-// prioritization fee = UNIT_PRICE * UNIT_LIMIT
 fn get_unit_price() -> u64 {
     env::var("UNIT_PRICE")
         .ok()
@@ -36,71 +22,35 @@ fn get_unit_limit() -> u32 {
         .and_then(|v| u32::from_str(&v).ok())
         .unwrap_or(300_000)
 }
-pub async fn get_mint_info(
-    client: Arc<solana_client::nonblocking::rpc_client::RpcClient>,
-    _keypair: Arc<Keypair>,
-    address: &Pubkey,
-) -> TokenResult<StateWithExtensionsOwned<Mint>> {
-    let program_client = Arc::new(ProgramRpcClient::new(
-        client.clone(),
-        ProgramRpcClientSendTransaction,
-    ))
+
+pub fn add_compute_budget_instructions(instructions: &mut Vec<Instruction>) {
+    let unit_price = get_unit_price();
+    let unit_limit = get_unit_limit();
+
+    instructions.insert(0, ComputeBudgetInstruction::set_compute_unit_limit(unit_limit));
+    instructions.insert(1, ComputeBudgetInstruction::set_compute_unit_price(unit_price));
 }
 
+pub fn create_transaction(
+    instructions: Vec<Instruction>,
+    payer: &Keypair,
+    recent_blockhash: solana_sdk::hash::Hash,
+) -> Transaction {
+    let mut tx = Transaction::new_with_payer(&instructions, Some(&payer.pubkey()));
+    tx.sign(&[payer], recent_blockhash);
+    tx
+}
 
+pub fn send_and_confirm_transaction(
+    rpc_client: &solana_client::rpc_client::RpcClient,
+    transaction: &Transaction,
+) -> Result<solana_sdk::signature::Signature, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
-    let mut txs = vec![];
-    if use_jito {
-        // jito
-        init_tip_accounts().await;
-        let tip_account = get_tip_account().await?;
-        let jito_client = Arc::new(JitoRpcClient::new(format!(
-            "{}/api/v1/bundles",
-            *jito::BLOCK_ENGINE_URL
-        )));
-        // jito tip, the upper limit is 0.1
-        let mut tip = get_tip_value().await?;
-        tip = tip.min(0.1);
-        let tip_lamports = ui_amount_to_amount(tip, spl_token::native_mint::DECIMALS);
-        logger.log(format!(
-            "tip account: {}, tip(sol): {}, lamports: {}",
-            tip_account, tip, tip_lamports
-        ));
-        // tip tx
-        let bundle: Vec<VersionedTransaction> = vec![
-            VersionedTransaction::from(txn),
-            VersionedTransaction::from(system_transaction::transfer(
-                keypair,
-                &tip_account,
-                tip_lamports,
-                recent_blockhash,
-            )),
-        ];
-        let bundle_id = jito_client.send_bundle(&bundle).await?;
-        logger.log(format!("bundle_id: {}", bundle_id));
 
-        logger.log(format!("tx ellapsed: {:?}", start_time.elapsed()));
-        txs = wait_for_bundle_confirmation(
-            move |id: String| {
-                let client = Arc::clone(&jito_client);
-                async move {
-                    let response = client.get_bundle_statuses(&[id]).await;
-                    let statuses = response.inspect_err(|err| {
-                        logger.log(format!("Error fetching bundle status: {:?}", err));
-                    })?;
-                    Ok(statuses.value)
-                }
-            },
-            bundle_id,
-            Duration::from_millis(1000),
-            Duration::from_secs(10),
-        )
-        .await?;
-    } else {
-        let sig = common::rpc::send_txn(client, &txn, true)?;
-        logger.log(format!("signature: {:#?}", sig));
-        txs.push(sig.to_string());
-    }
+    let signature = rpc_client.send_and_confirm_transaction(transaction)?;
 
-    Ok(txs)
+    println!("Transaction confirmed in {:?}", start_time.elapsed());
+    println!("Signature: {}", signature);
+
+    Ok(signature)
 }
