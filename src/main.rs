@@ -1,3 +1,5 @@
+mod config;
+use config::Config;
 use solana_sdk::signature::Signer;
 use std::env;
 use std::time::Instant;
@@ -14,6 +16,11 @@ mod ws_logs;
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
+
+    // Load and validate config
+    let config = Config::from_env()?;
+    config.validate()?;
+    println!("✅ Dry run mode: {}", config.dry_run);
 
     println!("🚀 Solana Trading Bot - Phase 3");
     println!("============================================");

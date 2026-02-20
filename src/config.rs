@@ -67,18 +67,15 @@ impl Config {
             dry_run,
         })
     }
-    
-    pub fn validate(&self) -> Result<()> {
-        if self.rpc_https_url.is_empty() {
-            return Err(anyhow!("RPC_HTTPS_URL cannot be empty"));
-        }
-        if self.rpc_wss_url.is_empty() {
-            return Err(anyhow!("RPC_WSS_URL cannot be empty"));
-        }
-        if self.private_key.is_none() && !self.dry_run {
-            println!("⚠️  Warning: No private key set. Dry-run mode recommended.");
-        }
-        Ok(())
+
+// Runtime safety checks
+if !self.dry_run {
+    if self.private_key.is_none() {
+        return Err(anyhow!("PRIVATE_KEY required when dry_run = false"));
+    }
+    if self.rpc_https_url.contains("devnet") || self.rpc_https_url.contains("localhost") {
+        println!("⚠️  WARNING: Running with dry_run=false on devnet/localhost!");
+        println!("   Set DRY_RUN=true for testing, or use mainnet RPC for real trading.");
     }
     
     // Helper to check if we can execute real trades
