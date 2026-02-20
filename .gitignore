@@ -1,2 +1,4 @@
 .env
-target
+targetsolana-release/
+solana-release-*.tar.bz2
+*.tar.bz2
