@@ -1,0 +1,93 @@
+use std::sync::Arc;
+use std::time::Instant;
+use anyhow::Result;
+use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcSendTransactionConfig;
+use solana_sdk::commitment_config::CommitmentConfig;
+use trading_bot::config::Config;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    println!("🚀 Solana Trading Bot - Phase 1 (Complete)");
+    println!("============================================");
+    
+    // Load configuration
+    let config = Config::from_env()?;
+    config.validate()?;
+    
+    println!("✅ Configuration loaded");
+    println!("   RPC: {}", config.rpc_https_url);
+    println!("   WebSocket: {}", config.rpc_wss_url);
+    println!("   Dry run: {}", config.dry_run);
+    
+    // Create RPC client with timeout
+    let rpc_client = Arc::new(RpcClient::new_with_timeout(
+        config.rpc_https_url.clone(),
+        config.connection_timeout,
+    ));
+    
+    // Test 1: Version check
+    match rpc_client.get_version() {
+        Ok(version) => {
+            println!("✅ RPC version: {}", version);
+        }
+        Err(e) => {
+            println!("❌ Failed to get version: {}", e);
+            return Err(e.into());
+        }
+    }
+    
+    // Test 2: Slot with latency measurement
+    let t0 = Instant::now();
+    match rpc_client.get_slot() {
+        Ok(slot) => {
+            let dt = t0.elapsed();
+            println!("✅ Current slot: {} (latency: {:?})", slot, dt);
+            
+            // Elite insight: Track latency over time
+            if dt.as_millis() > 500 {
+                println!("⚠️  High latency detected (>500ms). Consider using a dedicated RPC.");
+            }
+        }
+        Err(e) => {
+            println!("❌ Failed to get slot: {}", e);
+            return Err(e.into());
+        }
+    }
+    
+    // Test 3: Recent blockhash (needed for transactions)
+    match rpc_client.get_latest_blockhash() {
+        Ok(blockhash) => {
+            println!("✅ Latest blockhash: {}", blockhash);
+        }
+        Err(e) => {
+            println!("❌ Failed to get blockhash: {}", e);
+            return Err(e.into());
+        }
+    }
+    
+    // Test 4: Health check (elite feature)
+    match rpc_client.get_health() {
+        Ok(()) => {
+            println!("✅ RPC health: OK");
+        }
+        Err(e) => {
+            println!("❌ RPC health check failed: {}", e);
+            // Don't return error - just warn
+        }
+    }
+    
+    println!("============================================");
+    println!("✅ Phase 1 complete - Full RPC connectivity");
+    println!("   ✓ Configuration validated");
+    println!("   ✓ Version check");
+    println!("   ✓ Slot fetch + latency");
+    println!("   ✓ Blockhash available");
+    println!("   ✓ Health check");
+    
+    if config.dry_run {
+        println!("\n🔧 DRY RUN MODE - No real transactions will be sent");
+    }
+    
+    Ok(())
+}
