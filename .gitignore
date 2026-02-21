@@ -6,3 +6,13 @@ solana-release-*.tar.bz2
 /solana-release/
 /**/*.log
 .env
+
+# Rust
+/target/
+
+# Local DB
+trading_bot.db
+*.db
+
+# Env secrets
+.env

@@ -1,7 +1,6 @@
 use std::env;
 use std::time::Instant;
 use std::sync::Arc;
-use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use dotenv::dotenv;

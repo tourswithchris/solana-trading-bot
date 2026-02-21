@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rusqlite::{Connection, params};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};

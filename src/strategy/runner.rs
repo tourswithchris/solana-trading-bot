@@ -1,3 +1,7 @@
+use solana_client::rpc_config::RpcTransactionConfig;
+use solana_transaction_status::UiTransactionEncoding;
+use solana_sdk::commitment_config::CommitmentConfig;
+use crate::strategy::tx_parse::{extract_fee_sol, extract_owner_token_deltas};
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -198,38 +202,55 @@ impl StrategyRunner {
                     ).await;
                 }
 
-                // Save to database
+                                // Save to database with real data
                 if let Some(db) = &self.db {
-                    let pnl = (candidate.in_amount_lamports as f64 / 1_000_000_000.0 * 0.99) - 
-                               (candidate.in_amount_lamports as f64 / 1_000_000_000.0);
-                    
-                    let db_trade = DbTradeRecord {
-                        id: 0,
-                        signature: sig.clone(),
-                        timestamp: Utc::now(),
-                        input_token: candidate.in_mint.to_string(),
-                        output_token: candidate.out_mint.to_string(),
-                        input_amount: candidate.in_amount_lamports as f64 / 1_000_000_000.0,
-                        output_amount: candidate.in_amount_lamports as f64 / 1_000_000_000.0 * 0.99,
-                        price: 0.99,
-                        fee_sol: fee_estimate,
-                        success: true,
-                        strategy: "WSOL→USDC".to_string(),
-                        pnl,
-                    };
-                    let _ = db.insert_trade(&db_trade).await;
-                }
+                    // Fetch transaction to get real fees and amounts
+                    let sig_parsed = sig.parse().ok();
+                    if let Some(sig_parsed) = sig_parsed {
+                        let tx_cfg = RpcTransactionConfig {
+                            encoding: Some(UiTransactionEncoding::JsonParsed),
+                            commitment: Some(CommitmentConfig::confirmed()),
+                            max_supported_transaction_version: Some(0),
+                        };
 
-                // Cooldown after successful trade
-                self.state_machine.set_cooldown(Duration::from_secs(30));
-            }
-            Err(e) => {
-                println!("   ❌ Trade failed: {}", e);
-                if let Some(telegram) = &self.telegram {
-                    let _ = telegram.notify_error(&format!("Trade failed: {}", e)).await;
+                        if let Ok(tx) = self.execution_engine.rpc_client.get_transaction_with_config(&sig_parsed, tx_cfg).await {
+                            let fee_sol = extract_fee_sol(&tx);
+
+                            let owner = self.wallet.pubkey();
+                            let deltas = extract_owner_token_deltas(&tx, &owner);
+
+                            // Find WSOL and USDC deltas
+                            let wsol_mint = "So11111111111111111111111111111111111111112";
+                            let usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+                            let wsol_delta = deltas.iter().find(|d| d.mint == wsol_mint).map(|d| d.delta_ui).unwrap_or(0.0);
+                            let usdc_delta = deltas.iter().find(|d| d.mint == usdc_mint).map(|d| d.delta_ui).unwrap_or(0.0);
+
+                            // For a WSOL->USDC buy route:
+                            let input_spent_sol = (-wsol_delta).max(0.0); // WSOL usually decreases => negative delta
+                            let output_received_usdc = usdc_delta.max(0.0);
+
+                            // Simple pnl in SOL terms (placeholder conversion)
+                            let pnl_sol = -fee_sol;
+
+                            let db_trade = crate::db::trades::TradeRecord {
+                                id: 0,
+                                signature: sig.clone(),
+                                timestamp: chrono::Utc::now(),
+                                input_token: wsol_mint.to_string(),
+                                output_token: usdc_mint.to_string(),
+                                input_amount: input_spent_sol,
+                                output_amount: output_received_usdc,
+                                price: if input_spent_sol > 0.0 { output_received_usdc / input_spent_sol } else { 0.0 },
+                                fee_sol,
+                                success: true,
+                                strategy: "WSOL→USDC".to_string(),
+                                pnl: pnl_sol,
+                            };
+                            let _ = db.insert_trade(&db_trade).await;
+                            
+                            println!("   💾 Trade saved to DB: {} WSOL → {} USDC, fee: {} SOL", 
+                                     input_spent_sol, output_received_usdc, fee_sol);
+                        }
+                    }
                 }
-                self.state_machine.set_cooldown(Duration::from_secs(10));
-            }
-        }
-    }
-}
