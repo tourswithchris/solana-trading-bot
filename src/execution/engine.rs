@@ -32,6 +32,18 @@ impl ExecutionEngine {
         }
     }
 
+    pub async fn build_swap_instruction(
+        &self,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        amount_lamports: u64,
+        slippage_bps: u16,
+    ) -> Result<solana_sdk::instruction::Instruction> {
+        // This delegates to the Jupiter executor
+        let executor = JupiterExecutor::new(self.rpc_client.clone(), self.wallet.clone());
+        executor.build_swap_instruction(input_mint, output_mint, amount_lamports, slippage_bps).await
+    }
+
     pub async fn can_execute(&self) -> Result<()> {
         // Check if already executing
         if *self.is_executing.lock().await {
@@ -83,7 +95,7 @@ impl ExecutionEngine {
 
         // Create executor and simulate
         let executor = JupiterExecutor::new(self.rpc_client.clone(), self.wallet.clone());
-        
+
         // Simulate first
         println!("🔄 Simulating transaction...");
         let instruction = executor.build_swap_instruction(
@@ -92,7 +104,7 @@ impl ExecutionEngine {
             amount_lamports,
             slippage_bps,
         ).await?;
-        
+
         if let Err(e) = executor.simulate_transaction(instruction.clone()).await {
             // Reset executing flag
             {
@@ -115,7 +127,7 @@ impl ExecutionEngine {
         {
             let mut last = self.last_execution.lock().await;
             *last = Instant::now();
-            
+
             let mut executing = self.is_executing.lock().await;
             *executing = false;
         }

@@ -1,17 +1,13 @@
+use anyhow::{Result};
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signature;
 use solana_client::nonblocking::rpc_client::RpcClient as NonblockingRpcClient;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
 use std::sync::Arc;
-
-use anyhow::Result;
-
-// Import the enums/types swap.rs is using
-use crate::engine::swap::{SwapDirection, SwapInType};
+use solana_sdk::signature::Keypair;
+use rand::Rng;
 
 pub struct Raydium {
-    pub program_id: Pubkey,
-    pub amm_id: Pubkey,
     pub rpc_client: Arc<RpcClient>,
     pub nonblocking_client: Arc<NonblockingRpcClient>,
     pub wallet: Arc<Keypair>,
@@ -24,31 +20,39 @@ impl Raydium {
         wallet: Arc<Keypair>,
     ) -> Self {
         Self {
-            program_id: Pubkey::default(),
-            amm_id: Pubkey::default(),
             rpc_client,
             nonblocking_client,
             wallet,
         }
     }
 
-    // Generic pool_state so we don't depend on raydium_amm types
-    pub async fn swap<T>(
+    pub async fn swap(
         &self,
         amount_in: f64,
-        swap_direction: SwapDirection,
-        in_type: SwapInType,
+        swap_direction: &str,  // Changed from enum to &str
+        in_type: &str,          // Changed from enum to &str
         slippage: f64,
         use_jito: bool,
         amm_pool_id: Pubkey,
-        pool_state: T,
-    ) -> Result<Vec<String>>
-    where
-        T: std::fmt::Debug + Send,
-    {
-        // Placeholder: just confirms wiring compiles
-        let _ = (amount_in, swap_direction, in_type, slippage, use_jito, amm_pool_id, pool_state);
+    ) -> Result<Vec<String>> {
+        println!("\n🔄 RAYDIUM SWAP SIMULATION");
+        println!("   Amount: {} SOL", amount_in);
+        println!("   Direction: {}", swap_direction);
+        println!("   Input type: {}", in_type);
+        println!("   Slippage: {}%", slippage);
+        println!("   Jito protection: {}", use_jito);
+        println!("   Pool ID: {}", amm_pool_id);
 
-        Ok(vec!["simulated_signature_raydium".to_string()])
+        // Generate fake signature using random bytes
+        let mut rng = rand::thread_rng();
+        let mut fake_sig = [0u8; 64];
+        rng.fill(&mut fake_sig);
+
+        let signature = Signature::from(fake_sig);
+
+        println!("✅ SIMULATED SWAP EXECUTED");
+        println!("   Signature: {}", signature);
+
+        Ok(vec![signature.to_string()])
     }
 }

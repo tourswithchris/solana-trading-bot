@@ -1,5 +1,3 @@
-use trading_bot::execution::engine::ExecutionEngine;
-use anyhow::Result;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
@@ -14,6 +12,10 @@ use std::collections::HashSet;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use solana_sdk::signature::Keypair;
+use anyhow::Result;
+use tokio::sync::mpsc::Sender;
+
+use trading_bot::strategy::event::SwapEvent;
 
 // Known DEX program IDs
 const JUPITER: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
@@ -37,7 +39,7 @@ fn extract_mints(tx: &EncodedConfirmedTransactionWithStatusMeta) -> HashSet<Stri
     if let Some(meta) = &tx.transaction.meta {
         // Handle pre_token_balances (which is OptionSerializer)
         use solana_transaction_status::option_serializer::OptionSerializer;
-        
+
         match &meta.pre_token_balances {
             OptionSerializer::Some(balances) => {
                 for b in balances {
@@ -46,7 +48,7 @@ fn extract_mints(tx: &EncodedConfirmedTransactionWithStatusMeta) -> HashSet<Stri
             }
             _ => {}
         }
-        
+
         match &meta.post_token_balances {
             OptionSerializer::Some(balances) => {
                 for b in balances {
@@ -69,7 +71,7 @@ fn tracked_hits(mints: &HashSet<String>) -> Vec<String> {
         .collect()
 }
 
-pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>) -> Result<()> {
+pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>, event_sender: Sender<SwapEvent>) -> Result<()> {
     println!("📡 Connecting PubSub: {}", ws_url);
 
     let client = PubsubClient::new(ws_url).await?;
@@ -78,9 +80,6 @@ pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>) -> Result<()> {
     // Create HTTP RPC client for fetching transaction details
     let http_rpc = Arc::new(RpcClient::new("https://rpc.helius.xyz/?api-key=e84d2325-40ef-4e91-8a0a-bd4721ea4b26".to_string()));
     println!("✅ HTTP RPC client created");
-    // Create execution engine
-    let engine = Arc::new(ExecutionEngine::new(http_rpc.clone(), _wallet.clone()));
-    println!("✅ Execution engine created");
 
     let config = RpcTransactionLogsConfig {
         commitment: Some(CommitmentConfig::processed()),
@@ -160,28 +159,20 @@ pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>) -> Result<()> {
                         let mints = extract_mints(&tx);
                         let hits = tracked_hits(&mints);
 
-                                                if !hits.is_empty() {
+                        if !hits.is_empty() {
                             println!("   🪙 Tracked tokens: {:?}", hits);
+
+                            // Create and send swap event
+                            let event = SwapEvent {
+                                signature: sig,
+                                programs: swap_programs.iter().map(|&s| s.to_string()).collect(),
+                                mints: hits.clone().into_iter().collect(),
+                            };
                             
-                            // Check if this is Wrapped SOL (our trigger token)
-                            if hits.contains(&"So11111111111111111111111111111111111111112".to_string()) {
-                                println!("   💰 Wrapped SOL detected - checking risk gates...");
-                                
-                                // Execute swap with risk gates
-                                let input_mint = "So11111111111111111111111111111111111111112".parse().unwrap();
-                                let output_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse().unwrap();
-                                
-                                match engine.execute_swap(
-                                    input_mint,
-                                    output_mint,
-                                    0.01,  // 0.01 SOL
-                                    100,   // 1% slippage
-                                ).await {
-                                    Ok(sig) => println!("   ✅ Swap executed: {}", sig),
-                                    Err(e) => println!("   ⚠️ Swap rejected: {}", e),
-                                }
+                            if let Err(e) = event_sender.send(event).await {
+                                println!("   ⚠️ Failed to send event: {}", e);
                             } else {
-                                println!("   🔍 Candidate identified - not in trigger list");
+                                println!("   📤 Event sent to strategy engine");
                             }
                         }
                     }
