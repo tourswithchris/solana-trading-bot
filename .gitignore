@@ -2,3 +2,7 @@
 targetsolana-release/
 solana-release-*.tar.bz2
 *.tar.bz2
+/target/
+/solana-release/
+/**/*.log
+.env
