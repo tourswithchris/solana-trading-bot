@@ -101,4 +101,20 @@ impl PnLTracker {
         println!("   Volume: {:.2} SOL", self.total_volume_sol);
         println!("   Sharpe Ratio: {:.2}", self.sharpe_ratio());
     }
+    pub fn record_trade(&mut self, signature: String, input_token: String, output_token: String, 
+                        input_amount: f64, output_amount: f64, fee_sol: f64, success: bool) {
+        let trade = TradeRecord {
+            signature,
+            timestamp: chrono::Utc::now(),
+            input_token,
+            output_token,
+            input_amount,
+            output_amount,
+            price: output_amount / input_amount,
+            fee_sol,
+            success,
+            strategy: "auto".to_string(),
+        };
+        self.add_trade(trade);
+    }
 }

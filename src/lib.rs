@@ -8,3 +8,6 @@ pub mod config;
 pub mod websocket;
 pub mod execution;
 pub mod strategy;
+pub mod notifications;
+pub mod db;
+pub mod web;

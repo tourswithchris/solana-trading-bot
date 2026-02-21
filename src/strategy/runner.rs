@@ -1,19 +1,28 @@
 use anyhow::Result;
-use tokio::sync::mpsc::{Receiver};
+use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
 use solana_sdk::signature::Keypair;
 use solana_sdk::pubkey::Pubkey;
 use std::time::{Duration, Instant};
+use chrono::Utc;
 
 use crate::execution::engine::ExecutionEngine;
+use crate::execution::jupiter::JupiterExecutor;
 use crate::strategy::event::SwapEvent;
 use crate::strategy::state::{StateMachine, BotState};
 use crate::strategy::candidate::{TradeCandidate, RiskLimits};
+use crate::strategy::pnl::{PnLTracker, TradeRecord};
+use crate::notifications::telegram::TelegramNotifier;
+use crate::db::trades::{TradeDatabase, TradeRecord as DbTradeRecord};
 
 // Token allowlist (only trade these)
 const ALLOWED_TOKENS: &[&str] = &[
     "So11111111111111111111111111111111111111112", // Wrapped SOL
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
+    "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So", // mSOL
+    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", // JitoSOL
+    "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1", // bSOL
 ];
 
 pub struct StrategyRunner {
@@ -21,16 +30,27 @@ pub struct StrategyRunner {
     pub risk_limits: RiskLimits,
     pub execution_engine: Arc<ExecutionEngine>,
     pub wallet: Arc<Keypair>,
+    pub pnl_tracker: PnLTracker,
+    pub telegram: Option<Arc<TelegramNotifier>>,
+    pub db: Option<Arc<TradeDatabase>>,
     pub last_simulation_time: Option<Instant>,
 }
 
 impl StrategyRunner {
-    pub fn new(execution_engine: Arc<ExecutionEngine>, wallet: Arc<Keypair>) -> Self {
+    pub fn new(
+        execution_engine: Arc<ExecutionEngine>,
+        wallet: Arc<Keypair>,
+        telegram: Option<Arc<TelegramNotifier>>,
+        db: Option<Arc<TradeDatabase>>,
+    ) -> Self {
         Self {
             state_machine: StateMachine::new(),
             risk_limits: RiskLimits::new(),
             execution_engine,
             wallet,
+            pnl_tracker: PnLTracker::new(),
+            telegram,
+            db,
             last_simulation_time: None,
         }
     }
@@ -80,16 +100,19 @@ impl StrategyRunner {
 
         println!("   ✅ Allowed tokens: {:?}", allowed_mints);
 
-        // Step 4: Create trade candidate (simplified - always trade WSOL→USDC with 0.01 SOL)
+        // Step 4: Create trade candidate (always trade WSOL→USDC for now)
         let in_mint = "So11111111111111111111111111111111111111112".parse().unwrap();
         let out_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".parse().unwrap();
-        
+
+        // Position sizes: 10_000_000 = 0.01 SOL, 100_000_000 = 0.1 SOL
+        let amount = 10_000_000; // 0.01 SOL default
+
         let candidate = TradeCandidate {
             in_mint,
             out_mint,
-            in_amount_lamports: 10_000_000, // 0.01 SOL
+            in_amount_lamports: amount,
             max_slippage_bps: 100, // 1%
-            reason: "WSOL→USDC swap detected".to_string(),
+            reason: format!("WSOL→USDC swap detected"),
         };
 
         // Step 5: Validate risk limits
@@ -106,7 +129,7 @@ impl StrategyRunner {
         self.last_simulation_time = Some(Instant::now());
 
         println!("   🔄 Simulating trade...");
-        
+
         // Build instruction for simulation
         let instruction = match self.execution_engine.build_swap_instruction(
             candidate.in_mint,
@@ -123,7 +146,6 @@ impl StrategyRunner {
         };
 
         // Create executor for simulation
-        use crate::execution::jupiter::JupiterExecutor;
         let executor = JupiterExecutor::new(
             self.execution_engine.rpc_client.clone(),
             self.wallet.clone()
@@ -140,7 +162,7 @@ impl StrategyRunner {
 
         // Step 7: Execute
         self.state_machine.transition(BotState::Execute);
-        
+
         println!("   💰 Executing trade...");
         match self.execution_engine.execute_swap(
             candidate.in_mint,
@@ -151,12 +173,61 @@ impl StrategyRunner {
             Ok(sig) => {
                 println!("   ✅ Trade executed: {}", sig);
                 self.state_machine.transition(BotState::Confirm);
-                
+
+                // Record trade in PnL
+                let fee_estimate = 0.000005;
+                self.pnl_tracker.record_trade(
+                    sig.clone(),
+                    candidate.in_mint.to_string(),
+                    candidate.out_mint.to_string(),
+                    candidate.in_amount_lamports as f64 / 1_000_000_000.0,
+                    candidate.in_amount_lamports as f64 / 1_000_000_000.0 * 0.99,
+                    fee_estimate,
+                    true,
+                );
+                self.pnl_tracker.print_summary();
+
+                // Send Telegram notification
+                if let Some(telegram) = &self.telegram {
+                    let amount = candidate.in_amount_lamports as f64 / 1_000_000_000.0;
+                    let _ = telegram.notify_trade(
+                        &sig,
+                        &candidate.in_mint.to_string()[..8],
+                        &candidate.out_mint.to_string()[..8],
+                        amount
+                    ).await;
+                }
+
+                // Save to database
+                if let Some(db) = &self.db {
+                    let pnl = (candidate.in_amount_lamports as f64 / 1_000_000_000.0 * 0.99) - 
+                               (candidate.in_amount_lamports as f64 / 1_000_000_000.0);
+                    
+                    let db_trade = DbTradeRecord {
+                        id: 0,
+                        signature: sig.clone(),
+                        timestamp: Utc::now(),
+                        input_token: candidate.in_mint.to_string(),
+                        output_token: candidate.out_mint.to_string(),
+                        input_amount: candidate.in_amount_lamports as f64 / 1_000_000_000.0,
+                        output_amount: candidate.in_amount_lamports as f64 / 1_000_000_000.0 * 0.99,
+                        price: 0.99,
+                        fee_sol: fee_estimate,
+                        success: true,
+                        strategy: "WSOL→USDC".to_string(),
+                        pnl,
+                    };
+                    let _ = db.insert_trade(&db_trade).await;
+                }
+
                 // Cooldown after successful trade
                 self.state_machine.set_cooldown(Duration::from_secs(30));
             }
             Err(e) => {
                 println!("   ❌ Trade failed: {}", e);
+                if let Some(telegram) = &self.telegram {
+                    let _ = telegram.notify_error(&format!("Trade failed: {}", e)).await;
+                }
                 self.state_machine.set_cooldown(Duration::from_secs(10));
             }
         }

@@ -1,6 +1,7 @@
 use std::env;
 use std::time::Instant;
 use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use dotenv::dotenv;
@@ -17,11 +18,14 @@ use config::Config;
 use trading_bot::strategy::event::SwapEvent;
 use trading_bot::strategy::runner::StrategyRunner;
 use trading_bot::execution::engine::ExecutionEngine;
+use trading_bot::notifications::telegram::TelegramNotifier;
+use trading_bot::db::trades::TradeDatabase;
+use trading_bot::web::server::start_web_server;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
-    
+
     // Load and validate config
     let config = Config::from_env()?;
     config.validate()?;
@@ -29,6 +33,21 @@ async fn main() -> Result<()> {
 
     println!("🚀 Solana Trading Bot - Phase 6");
     println!("============================================");
+
+    // --- Initialize Telegram (optional) ---
+    let telegram = if let (Ok(token), Ok(chat_id)) = (
+        env::var("TELEGRAM_BOT_TOKEN"),
+        env::var("TELEGRAM_CHAT_ID")
+    ) {
+        let notifier = Arc::new(TelegramNotifier::new(token, chat_id));
+        // Send startup notification
+        let _ = notifier.send_message("🚀 Trading bot started").await;
+        println!("✅ Telegram notifier initialized");
+        Some(notifier)
+    } else {
+        println!("⚠️ Telegram not configured - continuing without notifications");
+        None
+    };
 
     // --- RPC Connection ---
     let rpc_https_url = env::var("RPC_HTTPS_URL")
@@ -50,12 +69,17 @@ async fn main() -> Result<()> {
 
     // --- Wallet ---
     println!("\n🔐 Loading wallet...");
-    
+
     let kp = load_keypair_from_env()?;
     let wallet = Arc::new(kp);
     println!("✅ Wallet: {}", wallet.pubkey());
     let sig = test_signing(&wallet);
     println!("✅ Sign test: {}", &sig[..16]);
+
+    // --- Initialize database ---
+    let db_path = "./trading_bot.db";
+    let db = Arc::new(TradeDatabase::new(db_path)?);
+    println!("✅ Database initialized at {}", db_path);
 
     // --- Create channel for events ---
     let (event_sender, event_receiver) = mpsc::channel::<SwapEvent>(100);
@@ -65,8 +89,13 @@ async fn main() -> Result<()> {
     let execution_engine = Arc::new(ExecutionEngine::new(rpc_nonblocking.clone(), wallet.clone()));
     println!("✅ Execution engine created");
 
-    // --- Create strategy runner ---
-    let mut strategy_runner = StrategyRunner::new(execution_engine.clone(), wallet.clone());
+    // --- Create strategy runner with Telegram and database ---
+    let mut strategy_runner = StrategyRunner::new(
+        execution_engine.clone(),
+        wallet.clone(),
+        telegram.clone(),
+        Some(db.clone()),
+    );
     println!("✅ Strategy runner created");
 
     // --- Spawn strategy runner task ---
@@ -74,15 +103,28 @@ async fn main() -> Result<()> {
         strategy_runner.run(event_receiver).await;
     });
 
+    // --- Spawn web server in background ---
+    let web_db = db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = start_web_server(web_db, 3000).await {
+            eprintln!("❌ Web server error: {}", e);
+        }
+    });
+
     // --- WebSocket ---
     println!("\n📡 Phase 6: WebSocket Listener");
-    
+
     let ws_url = env::var("RPC_WSS_URL")
         .unwrap_or_else(|_| "wss://api.mainnet-beta.solana.com".to_string());
 
     match ws_logs::listen_logs(&ws_url, wallet.clone(), event_sender).await {
         Ok(_) => println!("✅ WebSocket completed"),
-        Err(e) => println!("❌ WebSocket error: {}", e),
+        Err(e) => {
+            println!("❌ WebSocket error: {}", e);
+            if let Some(telegram) = &telegram {
+                let _ = telegram.notify_error(&format!("WebSocket error: {}", e)).await;
+            }
+        }
     }
 
     println!("============================================");

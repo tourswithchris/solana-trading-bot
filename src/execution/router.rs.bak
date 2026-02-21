@@ -1,0 +1,70 @@
+use anyhow::{anyhow, Result};
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::instruction::Instruction;
+use std::sync::Arc;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::signature::Keypair;
+
+use crate::execution::jupiter::JupiterExecutor;
+use crate::execution::raydium::RaydiumExecutor; // We'll create this
+use crate::execution::pumpfun::PumpFunExecutor; // We'll create this
+
+pub enum DexType {
+    Jupiter,
+    Raydium,
+    PumpFun,
+}
+
+pub struct DexRouter {
+    pub rpc_client: Arc<RpcClient>,
+    pub wallet: Arc<Keypair>,
+}
+
+impl DexRouter {
+    pub fn new(rpc_client: Arc<RpcClient>, wallet: Arc<Keypair>) -> Self {
+        Self {
+            rpc_client,
+            wallet,
+        }
+    }
+
+    pub async fn get_best_quote(
+        &self,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        amount: u64,
+    ) -> Result<(DexType, u64)> {
+        // In production, you'd query each DEX and compare
+        // For now, just try Jupiter first
+        let jupiter = JupiterExecutor::new(self.rpc_client.clone(), self.wallet.clone());
+        
+        match jupiter.get_quote(input_mint, output_mint, amount).await {
+            Ok(quote) => Ok((DexType::Jupiter, quote)),
+            Err(_) => Err(anyhow!("No quotes available")),
+        }
+    }
+
+    pub async fn execute_swap(
+        &self,
+        dex: DexType,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        amount: u64,
+        slippage_bps: u16,
+    ) -> Result<String> {
+        match dex {
+            DexType::Jupiter => {
+                let executor = JupiterExecutor::new(self.rpc_client.clone(), self.wallet.clone());
+                executor.execute_swap(input_mint, output_mint, amount, slippage_bps).await
+            }
+            DexType::Raydium => {
+                // Will implement later
+                Err(anyhow!("Raydium not yet implemented"))
+            }
+            DexType::PumpFun => {
+                // Will implement later
+                Err(anyhow!("PumpFun not yet implemented"))
+            }
+        }
+    }
+}
