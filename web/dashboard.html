@@ -198,7 +198,7 @@
                             <th>Strategy</th>
                             <th>Input</th>
                             <th>Output</th>
-                            <th>Amount</th>
+                            <th>Fill</th>
                             <th>PnL</th>
                             <th>Status</th>
                         </tr>
@@ -251,7 +251,7 @@
                             <td>${timeStr}</td>
                             <td><a href="https://solscan.io/tx/${trade.signature}" target="_blank" class="signature-link">${trade.signature.slice(0, 8)}...</a></td>
                             <td>${trade.strategy}</td>
-                            <td>${trade.input_token.slice(0, 4)}...${trade.input_token.slice(-4)}</td>
+                            <td>${trade.input_amount.toFixed(4)} SOL → ${trade.output_amount.toFixed(2)} USDC</td>
                             <td>${trade.output_token.slice(0, 4)}...${trade.output_token.slice(-4)}</td>
                             <td>${trade.input_amount.toFixed(4)} SOL</td>
                             <td class="${pnlClass}">${pnlStr}</td>

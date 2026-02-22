@@ -1,4 +1,3 @@
-use solana_sdk::signature::Signer;
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -9,6 +8,7 @@ use chrono::Utc;
 use solana_client::rpc_config::RpcTransactionConfig;
 use solana_transaction_status::UiTransactionEncoding;
 use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::signature::Signer;
 
 use crate::execution::engine::ExecutionEngine;
 use crate::execution::jupiter::JupiterExecutor;
@@ -230,6 +230,13 @@ impl StrategyRunner {
                             // For a WSOL->USDC buy route:
                             let input_spent_sol = (-wsol_delta).max(0.0); // WSOL usually decreases => negative delta
                             let output_received_usdc = usdc_delta.max(0.0);
+                            let price_usdc_per_sol = if input_spent_sol > 0.0 { output_received_usdc / input_spent_sol } else { 0.0 };
+
+                            // Print REALIZED trade details
+                            println!(
+                                "✅ REALIZED: spent {:.6} SOL | received {:.4} USDC | fee {:.6} SOL | px {:.2} USDC/SOL",
+                                input_spent_sol, output_received_usdc, fee_sol, price_usdc_per_sol
+                            );
 
                             // Simple pnl in SOL terms (placeholder conversion)
                             let pnl_sol = -fee_sol;
@@ -242,16 +249,17 @@ impl StrategyRunner {
                                 output_token: usdc_mint.to_string(),
                                 input_amount: input_spent_sol,
                                 output_amount: output_received_usdc,
-                                price: if input_spent_sol > 0.0 { output_received_usdc / input_spent_sol } else { 0.0 },
+                                price: price_usdc_per_sol,
                                 fee_sol,
                                 success: true,
                                 strategy: "WSOL→USDC".to_string(),
                                 pnl: pnl_sol,
                             };
-                            let _ = db.insert_trade(&db_trade).await;
                             
-                            println!("   💾 Trade saved to DB: {} WSOL → {} USDC, fee: {} SOL", 
-                                     input_spent_sol, output_received_usdc, fee_sol);
+                            match db.insert_trade(&db_trade).await {
+                                Ok(_) => println!("✅ DB INSERTED: {}", sig),
+                                Err(e) => println!("❌ DB INSERT FAILED: {} | {}", sig, e),
+                            }
                         }
                     }
                 }

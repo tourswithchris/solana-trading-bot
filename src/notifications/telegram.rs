@@ -21,7 +21,7 @@ impl TelegramNotifier {
             "https://api.telegram.org/bot{}/sendMessage",
             self.bot_token
         );
-        
+
         let params = [
             ("chat_id", self.chat_id.as_str()),
             ("text", message),
@@ -29,7 +29,7 @@ impl TelegramNotifier {
         ];
 
         let response = self.client.post(&url).form(&params).send().await?;
-        
+
         if response.status().is_success() {
             Ok(())
         } else {
@@ -52,5 +52,9 @@ impl TelegramNotifier {
     pub async fn notify_error(&self, error: &str) -> Result<()> {
         let message = format!("❌ <b>Bot Error</b>\n\n{}", error);
         self.send_message(&message).await
+    }
+
+    pub async fn notify_text(&self, text: &str) -> Result<()> {
+        self.send_message(text).await
     }
 }

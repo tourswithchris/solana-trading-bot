@@ -80,6 +80,35 @@ async fn main() -> Result<()> {
     let db = Arc::new(TradeDatabase::new(db_path)?);
     println!("✅ Database initialized at {}", db_path);
 
+    // --- Spawn daily summary task ---
+    let tg_daily = telegram.clone();
+    let db_daily = db.clone();
+    
+    tokio::spawn(async move {
+        loop {
+            // Run every 24 hours (86400 seconds)
+            tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+            
+            if let (Some(tg), Ok(stats)) = (tg_daily.as_ref(), db_daily.get_stats().await) {
+                let msg = format!(
+                    "📊 Daily Summary\n\
+                     Trades: {}\n\
+                     Win rate: {:.1}%\n\
+                     Net PnL (SOL): {:.6}\n\
+                     Fees (SOL): {:.6}\n\
+                     Best: {:.6} | Worst: {:.6}",
+                    stats["total_trades"].as_i64().unwrap_or(0),
+                    stats["win_rate"].as_f64().unwrap_or(0.0),
+                    stats["net_pnl_sol"].as_f64().unwrap_or(0.0),
+                    stats["total_fees_sol"].as_f64().unwrap_or(0.0),
+                    stats["best_trade_sol"].as_f64().unwrap_or(0.0),
+                    stats["worst_trade_sol"].as_f64().unwrap_or(0.0),
+                );
+                let _ = tg.notify_text(&msg).await;
+            }
+        }
+    });
+
     // --- Create channel for events ---
     let (event_sender, event_receiver) = mpsc::channel::<SwapEvent>(100);
     println!("✅ Event channel created");
