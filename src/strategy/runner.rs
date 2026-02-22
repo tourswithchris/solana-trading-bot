@@ -70,9 +70,14 @@ impl StrategyRunner {
     }
 
     async fn process_event(&mut self, event: SwapEvent) {
-        // Step 1: Check if we're in cooldown
+                // Step 1: Check if we're in cooldown
         if !self.state_machine.cooldown_done() {
             println!("   ⏳ In cooldown, skipping");
+            
+            // Optional: Send cooldown notification (uncomment if you want it)
+            // if let Some(telegram) = &self.telegram {
+            //     let _ = telegram.notify_text("⏳ Bot in cooldown - waiting for next trade").await;
+            // }
             return;
         }
 

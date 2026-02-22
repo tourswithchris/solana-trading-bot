@@ -139,22 +139,25 @@ async fn main() -> Result<()> {
         }
     });
 
-    // --- WebSocket ---
-    println!("\n📡 Phase 6: WebSocket Listener");
+    // --- WebSocket with auto-reconnect ---
+    println!("\n📡 Phase 6: WebSocket Listener (auto-reconnect)");
+    
+    loop {
+        let ws_url = env::var("RPC_WSS_URL")
+            .unwrap_or_else(|_| "wss://api.mainnet-beta.solana.com".to_string());
 
-    let ws_url = env::var("RPC_WSS_URL")
-        .unwrap_or_else(|_| "wss://api.mainnet-beta.solana.com".to_string());
-
-    match ws_logs::listen_logs(&ws_url, wallet.clone(), event_sender).await {
-        Ok(_) => println!("✅ WebSocket completed"),
-        Err(e) => {
-            println!("❌ WebSocket error: {}", e);
-            if let Some(telegram) = &telegram {
-                let _ = telegram.notify_error(&format!("WebSocket error: {}", e)).await;
+        match ws_logs::listen_logs(&ws_url, wallet.clone(), event_sender.clone()).await {
+            Ok(_) => println!("✅ WebSocket completed normally, reconnecting in 5s..."),
+            Err(e) => {
+                println!("❌ WebSocket error: {}, reconnecting in 5s...", e);
+                if let Some(telegram) = &telegram {
+                    let _ = telegram.notify_error(&format!("WebSocket error: {}, reconnecting...", e)).await;
+                }
             }
         }
+        
+        // Wait before reconnecting
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
-
-    println!("============================================");
-    Ok(())
 }
+
