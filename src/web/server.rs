@@ -23,14 +23,24 @@ pub async fn start_web_server(db: Arc<TradeDatabase>, port: u16) -> Result<()> {
         .layer(cors)
         .with_state(db);
 
-    let addr = format!("0.0.0.0:{}", port);
-    println!("🌐 Web dashboard starting at http://{}", addr);
+    // Try multiple addresses
+    let addrs = [
+        format!("0.0.0.0:{}", port),
+        format!("127.0.0.1:{}", port),
+        format!("localhost:{}", port),
+    ];
     
-    axum::serve(
-        tokio::net::TcpListener::bind(&addr).await?,
-        app
-    )
-    .await?;
+    for addr in &addrs {
+        println!("🌐 Trying to bind to http://{}", addr);
+    }
+    
+    let listener = tokio::net::TcpListener::bind(&addrs[0]).await?;
+    let local_addr = listener.local_addr()?;
+    println!("✅ Web dashboard successfully bound to http://{}", local_addr);
+    println!("   Try also: http://127.0.0.1:{}", port);
+    println!("   Or WSL IP: http://172.19.39.96:{}", port);
+    
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

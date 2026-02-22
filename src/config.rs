@@ -3,6 +3,7 @@ use std::env;
 use std::time::Duration;
 use anyhow::{Result, anyhow};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Config {
     pub rpc_https_url: String,
@@ -21,6 +22,7 @@ pub struct Config {
     pub dry_run: bool,
 }
 
+#[allow(dead_code)]
 impl Config {
     pub fn from_env() -> Result<Self> {
         dotenv().ok(); // Load .env file

@@ -1,7 +1,4 @@
-use solana_client::rpc_config::RpcTransactionConfig;
-use solana_transaction_status::UiTransactionEncoding;
-use solana_sdk::commitment_config::CommitmentConfig;
-use crate::strategy::tx_parse::{extract_fee_sol, extract_owner_token_deltas};
+use solana_sdk::signature::Signer;
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -9,6 +6,9 @@ use solana_sdk::signature::Keypair;
 use solana_sdk::pubkey::Pubkey;
 use std::time::{Duration, Instant};
 use chrono::Utc;
+use solana_client::rpc_config::RpcTransactionConfig;
+use solana_transaction_status::UiTransactionEncoding;
+use solana_sdk::commitment_config::CommitmentConfig;
 
 use crate::execution::engine::ExecutionEngine;
 use crate::execution::jupiter::JupiterExecutor;
@@ -16,6 +16,7 @@ use crate::strategy::event::SwapEvent;
 use crate::strategy::state::{StateMachine, BotState};
 use crate::strategy::candidate::{TradeCandidate, RiskLimits};
 use crate::strategy::pnl::{PnLTracker, TradeRecord};
+use crate::strategy::tx_parse::{extract_fee_sol, extract_owner_token_deltas};
 use crate::notifications::telegram::TelegramNotifier;
 use crate::db::trades::{TradeDatabase, TradeRecord as DbTradeRecord};
 
@@ -202,7 +203,7 @@ impl StrategyRunner {
                     ).await;
                 }
 
-                                // Save to database with real data
+                // Save to database with real data
                 if let Some(db) = &self.db {
                     // Fetch transaction to get real fees and amounts
                     let sig_parsed = sig.parse().ok();
@@ -233,7 +234,7 @@ impl StrategyRunner {
                             // Simple pnl in SOL terms (placeholder conversion)
                             let pnl_sol = -fee_sol;
 
-                            let db_trade = crate::db::trades::TradeRecord {
+                            let db_trade = DbTradeRecord {
                                 id: 0,
                                 signature: sig.clone(),
                                 timestamp: chrono::Utc::now(),
@@ -254,3 +255,17 @@ impl StrategyRunner {
                         }
                     }
                 }
+
+                // Cooldown after successful trade
+                self.state_machine.set_cooldown(Duration::from_secs(30));
+            }
+            Err(e) => {
+                println!("   ❌ Trade failed: {}", e);
+                if let Some(telegram) = &self.telegram {
+                    let _ = telegram.notify_error(&format!("Trade failed: {}", e)).await;
+                }
+                self.state_machine.set_cooldown(Duration::from_secs(10));
+            }
+        }
+    }
+}

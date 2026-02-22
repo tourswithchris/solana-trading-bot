@@ -30,17 +30,20 @@ pub fn extract_owner_token_deltas(
     fn collect(
         balances: &Vec<solana_transaction_status::UiTransactionTokenBalance>,
         owner: &Pubkey,
-    ) -> std::collections::HashMap<(u64, String), f64> {
+    ) -> std::collections::HashMap<(usize, String), f64> {
         let mut map = std::collections::HashMap::new();
         for b in balances {
-            // owner is optional in some responses; skip if missing
-            let Some(o) = &b.owner else { continue; };
-            if o != &owner.to_string() { continue; }
-
-            let mint = b.mint.clone();
-            let idx = b.account_index;
-            let ui = b.ui_token_amount.ui_amount.unwrap_or(0.0);
-            map.insert((idx, mint), ui);
+            match &b.owner {
+                OptionSerializer::Some(o) => {
+                    if o != &owner.to_string() { continue; }
+                    
+                    let mint = b.mint.clone();
+                    let idx = b.account_index as usize;
+                    let ui = b.ui_token_amount.ui_amount.unwrap_or(0.0);
+                    map.insert((idx, mint), ui);
+                }
+                _ => continue,
+            }
         }
         map
     }
@@ -56,7 +59,7 @@ pub fn extract_owner_token_deltas(
     };
 
     // Union keys
-    let mut keys: std::collections::HashSet<(u64, String)> = std::collections::HashSet::new();
+    let mut keys: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
     for k in pre.keys() { keys.insert(k.clone()); }
     for k in post.keys() { keys.insert(k.clone()); }
 
