@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
         let ws_url = env::var("RPC_WSS_URL")
             .unwrap_or_else(|_| "wss://api.mainnet-beta.solana.com".to_string());
 
-        match ws_logs::listen_logs(&ws_url, wallet.clone(), event_sender.clone()).await {
+        match ws_logs::listen_logs(&ws_url, wallet.clone(), event_sender.clone(), telegram.clone()).await {
             Ok(_) => println!("✅ WebSocket completed normally, reconnecting in 5s..."),
             Err(e) => {
                 println!("❌ WebSocket error: {}, reconnecting in 5s...", e);

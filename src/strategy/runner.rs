@@ -1,3 +1,4 @@
+use crate::strategy::whale::WhaleTracker;
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -38,27 +39,29 @@ pub struct StrategyRunner {
     pub pnl_tracker: PnLTracker,
     pub telegram: Option<Arc<TelegramNotifier>>,
     pub db: Option<Arc<TradeDatabase>>,
+    pub whale_tracker: Arc<WhaleTracker>,
     pub last_simulation_time: Option<Instant>,
 }
 
 impl StrategyRunner {
     pub fn new(
-        execution_engine: Arc<ExecutionEngine>,
-        wallet: Arc<Keypair>,
-        telegram: Option<Arc<TelegramNotifier>>,
-        db: Option<Arc<TradeDatabase>>,
-    ) -> Self {
-        Self {
-            state_machine: StateMachine::new(),
-            risk_limits: RiskLimits::new(),
-            execution_engine,
-            wallet,
-            pnl_tracker: PnLTracker::new(),
-            telegram,
-            db,
-            last_simulation_time: None,
-        }
+    execution_engine: Arc<ExecutionEngine>,
+    wallet: Arc<Keypair>,
+    telegram: Option<Arc<TelegramNotifier>>,
+    db: Option<Arc<TradeDatabase>>,
+) -> Self {
+    Self {
+        state_machine: StateMachine::new(),
+        risk_limits: RiskLimits::new(),
+        execution_engine,
+        wallet,
+        pnl_tracker: PnLTracker::new(),
+        telegram,
+        db,
+        whale_tracker: Arc::new(WhaleTracker::new()),  // Add this line
+        last_simulation_time: None,
     }
+}
 
     pub async fn run(&mut self, mut event_receiver: Receiver<SwapEvent>) {
         println!("🚀 Strategy runner started");

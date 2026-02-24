@@ -1,3 +1,6 @@
+use trading_bot::strategy::whale::WhaleTracker;
+use trading_bot::strategy::sniper::launch::{LaunchSniper, TokenLaunch};
+use std::str::FromStr;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcTransactionConfig;
@@ -14,8 +17,10 @@ use std::sync::Arc;
 use solana_sdk::signature::Keypair;
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
+use chrono::Utc;
 
 use trading_bot::strategy::event::SwapEvent;
+use trading_bot::notifications::telegram::TelegramNotifier;
 
 // Known DEX program IDs
 const JUPITER: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
@@ -71,11 +76,34 @@ fn tracked_hits(mints: &HashSet<String>) -> Vec<String> {
         .collect()
 }
 
-pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>, event_sender: Sender<SwapEvent>) -> Result<()> {
+// Helper to extract amount from logs (simplified - you'll need to enhance this)
+fn extract_amount_from_logs(_logs: &[String]) -> Option<f64> {
+    // TODO: Implement actual amount extraction from transaction logs
+    // This is a placeholder that returns a random amount for testing
+    Some(5.0) // Return small amount to avoid triggering whale detection accidentally
+}
+
+// Helper to extract wallet address from logs
+fn extract_wallet_from_logs(_logs: &[String]) -> Option<Pubkey> {
+    // TODO: Implement actual wallet extraction
+    None
+}
+
+pub async fn listen_logs(
+    ws_url: &str, 
+    _wallet: Arc<Keypair>, 
+    event_sender: Sender<SwapEvent>,
+    telegram: Option<Arc<TelegramNotifier>>  // Add telegram parameter
+) -> Result<()> {
     println!("📡 Connecting PubSub: {}", ws_url);
 
     let client = PubsubClient::new(ws_url).await?;
     println!("✅ PubSub client created");
+
+    // Create whale tracker and launch sniper
+    let whale_tracker = Arc::new(WhaleTracker::new());
+    let launch_sniper = Arc::new(LaunchSniper::new());
+    println!("✅ Whale tracker and launch sniper initialized");
 
     // Create HTTP RPC client for fetching transaction details
     let http_rpc = Arc::new(RpcClient::new("https://rpc.helius.xyz/?api-key=e84d2325-40ef-4e91-8a0a-bd4721ea4b26".to_string()));
@@ -162,13 +190,64 @@ pub async fn listen_logs(ws_url: &str, _wallet: Arc<Keypair>, event_sender: Send
                         if !hits.is_empty() {
                             println!("   🪙 Tracked tokens: {:?}", hits);
 
+                            // WHALE DETECTION
+                            let amount_sol = extract_amount_from_logs(logs).unwrap_or(0.0);
+                            
+                            // Try to extract wallet address
+                            if let Some(wallet_addr) = extract_wallet_from_logs(logs) {
+                                if amount_sol > 10.0 {
+                                    println!("   🐋 POTENTIAL WHALE TRANSACTION DETECTED ({} SOL)", amount_sol);
+
+                                    if let Some(whale) = whale_tracker.process_transaction(
+                                        &wallet_addr,
+                                        amount_sol,
+                                        &hits[0]
+                                    ).await {
+                                        println!("   🏆 SUCCESSFUL WHALE IDENTIFIED! Win rate >70%");
+
+                                        // Send Telegram alert for whale detection
+                                        if let Some(telegram) = &telegram {
+                                            let msg = format!("🐋 Whale detected! Address: {}...", &whale.to_string()[..8]);
+                                            let _ = telegram.notify_text(&msg).await;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // LAUNCH SNIPER DETECTION
+                            // Check if this is a new token launch on PumpFun
+                            if swap_programs.contains("PumpFun") && logs.iter().any(|l| l.contains("Initialize")) {
+                                println!("   🚀 POTENTIAL NEW TOKEN LAUNCH DETECTED");
+
+                                // Create token launch object (simplified)
+                                let launch = TokenLaunch {
+                                    mint: Pubkey::default(), // TODO: Extract actual mint
+                                    dev_wallet: Pubkey::default(), // TODO: Extract dev wallet
+                                    launch_time: Utc::now(),
+                                    initial_liquidity_sol: 5.0, // TODO: Extract actual liquidity
+                                    social_mentions: 0,
+                                    verified: true,
+                                    blacklisted: false,
+                                };
+
+                                if let Some(score) = launch_sniper.evaluate_launch(&launch).await {
+                                    println!("   🎯 HIGH-POTENTIAL LAUNCH! Score: {:.1}", score);
+
+                                    // Send Telegram alert for high-potential launch
+                                    if let Some(telegram) = &telegram {
+                                        let msg = format!("🚀 High-potential token launch! Score: {:.1}", score);
+                                        let _ = telegram.notify_text(&msg).await;
+                                    }
+                                }
+                            }
+
                             // Create and send swap event
                             let event = SwapEvent {
                                 signature: sig,
                                 programs: swap_programs.iter().map(|&s| s.to_string()).collect(),
                                 mints: hits.clone().into_iter().collect(),
                             };
-                            
+
                             if let Err(e) = event_sender.send(event).await {
                                 println!("   ⚠️ Failed to send event: {}", e);
                             } else {
