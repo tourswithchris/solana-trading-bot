@@ -16,3 +16,11 @@ trading_bot.db
 
 # Env secrets
 .env
+
+# Local artifacts
+backtests/
+nautilus_env/
+*.log
+*.zip
+*.csv
+*.json
