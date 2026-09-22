@@ -1,5 +1,3 @@
----
-
 # 🚀 Solana Auto Trading Bot
 
 **Advanced automated trading bot for Solana tokens using Helius WebSocket feeds with PumpFun and Raydium support**
